@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "jobcli", "e2e-tests"]
+members = ["."]
 
 [package]
 name = "api"

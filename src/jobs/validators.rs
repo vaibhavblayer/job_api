@@ -204,6 +204,26 @@ fn validate_date_format(date_str: &str) -> Result<NaiveDate, chrono::ParseError>
     NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
 }
 
-fn is_valid_uuid(uuid_str: &str) -> bool {
-    uuid::Uuid::parse_str(uuid_str).is_ok()
+/// Validates ID format - accepts both UUID and custom prefixed IDs (e.g., J_XXXXXX)
+fn is_valid_uuid(id_str: &str) -> bool {
+    // Accept standard UUIDs
+    if uuid::Uuid::parse_str(id_str).is_ok() {
+        return true;
+    }
+    
+    // Accept custom prefixed IDs (format: X_XXXXXX where X is a letter and XXXXXX is Crockford Base32)
+    if id_str.len() >= 3 && id_str.chars().nth(1) == Some('_') {
+        let prefix = id_str.chars().next().unwrap();
+        let suffix = &id_str[2..];
+        
+        // Valid prefixes: J, R, C, A, U, I, M, V, T, E, X, S, P, H, F, G, K, W, N
+        let valid_prefixes = ['J', 'R', 'C', 'A', 'U', 'I', 'M', 'V', 'T', 'E', 'X', 'S', 'P', 'H', 'F', 'G', 'K', 'W', 'N'];
+        if valid_prefixes.contains(&prefix) && !suffix.is_empty() {
+            // Crockford Base32 alphabet (excludes I, L, O, U)
+            let crockford_chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+            return suffix.chars().all(|c| crockford_chars.contains(c.to_ascii_uppercase()));
+        }
+    }
+    
+    false
 }
