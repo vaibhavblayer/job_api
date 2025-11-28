@@ -1,0 +1,36 @@
+# Environment files with secrets
+.env
+.env.production
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Build artifacts
+/target/
+debug/
+release/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Uploaded files
+/resumes/
+/uploads/
+
+# PDFium library
+/lib/
+
+# Logs
+*.log

@@ -1,0 +1,58 @@
+[workspace]
+members = [".", "jobcli", "e2e-tests"]
+
+[package]
+name = "api"
+version = "0.1.0"
+edition = "2021"
+default-run = "api"
+
+[dependencies]
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.21"
+futures = "0.3"
+futures-util = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls"] }
+uuid = { version = "1", features = ["v4"] }
+reqwest = { version = "0.11", features = ["json", "gzip", "brotli", "native-tls"] }
+jsonwebtoken = "8"
+dotenv = "0.15"
+multipart = "0.18" # optional dependency for other helpers if needed
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+home = "=0.5.11"
+base64ct = "=1.7.1"
+pdfium-render = "0.8"
+image = { version = "0.25.8", features = ["png", "jpeg"] }
+infer = "0.15"
+base64 = "0.21"
+png = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+async-trait = "0.1"
+regex = "1.0"
+aes-gcm = "0.10"
+generic-array = "1.0"
+rand = "0.8"
+thiserror = "1.0"
+aws-config = "1.1"
+aws-sdk-s3 = "1.13"
+aws-sdk-sesv2 = "1.11"
+bytes = "1.5"
+urlencoding = "2.1"
+sentry = { version = "0.32", features = ["tracing", "tower", "tower-http"] }
+sentry-tracing = "0.32"
+printpdf = "0.7"
+pdf-extract = "0.7"
+
+[[bin]]
+name = "api"
+path = "src/main.rs"
+
+[[bin]]
+name = "generate_encryption_key"
+path = "src/generate_key.rs"
