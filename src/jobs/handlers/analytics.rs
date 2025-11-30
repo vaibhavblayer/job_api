@@ -33,8 +33,8 @@ pub async fn get_job_analytics(
         "Fetching job analytics"
     );
 
-    // Get total jobs count
-    let total_jobs = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs")
+    // Get total active jobs count (only count jobs with status = 'active')
+    let total_jobs = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE status = 'active'")
         .fetch_one(&state.db)
         .await
         .map_err(|e| {

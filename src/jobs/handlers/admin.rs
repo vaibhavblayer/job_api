@@ -1,7 +1,7 @@
 // src/jobs/handlers/admin.rs
 
 use axum::{
-    extract::{Extension, Path},
+    extract::{Extension, Path, Query},
     http::StatusCode,
     response::Json,
 };
@@ -12,6 +12,154 @@ use tracing::{debug, error, info, warn};
 use crate::auth::AuthedUser;
 use crate::common::{generate_history_id, generate_job_id, ApiError, AppState};
 use crate::jobs::models::*;
+
+/// Query params for admin job listing
+#[derive(Debug, serde::Deserialize)]
+pub struct AdminJobQueryParams {
+    pub status: Option<String>,
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
+}
+
+/// GET /api/admin/jobs - List all jobs (including drafts) for admin
+pub async fn admin_list_jobs(
+    Extension(state_lock): Extension<Arc<RwLock<AppState>>>,
+    authed: AuthedUser,
+    Query(params): Query<AdminJobQueryParams>,
+) -> Result<Json<JobListResponse>, ApiError> {
+    if !authed.is_admin {
+        return Err(ApiError::Forbidden("admin privileges required".to_string()));
+    }
+
+    let state = state_lock.read().await.clone();
+
+    let page = params.page.unwrap_or(1).max(1);
+    let limit = params.limit.unwrap_or(50).clamp(1, 100);
+    let offset = (page - 1) * limit;
+
+    // Build query based on status filter
+    let (total, jobs) = if let Some(status) = &params.status {
+        if status == "all" {
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+                .fetch_one(&state.db)
+                .await
+                .map_err(ApiError::DatabaseError)?;
+
+            let jobs = sqlx::query_as::<_, Job>(
+                r#"SELECT 
+                    id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
+                    salary_min, salary_max, job_type, experience_level, requirements, benefits,
+                    status, is_featured, created_at, updated_at, published_at
+                FROM jobs 
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?"#,
+            )
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&state.db)
+            .await
+            .map_err(ApiError::DatabaseError)?;
+
+            (total, jobs)
+        } else {
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = ?")
+                .bind(status)
+                .fetch_one(&state.db)
+                .await
+                .map_err(ApiError::DatabaseError)?;
+
+            let jobs = sqlx::query_as::<_, Job>(
+                r#"SELECT 
+                    id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
+                    salary_min, salary_max, job_type, experience_level, requirements, benefits,
+                    status, is_featured, created_at, updated_at, published_at
+                FROM jobs 
+                WHERE status = ?
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?"#,
+            )
+            .bind(status)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&state.db)
+            .await
+            .map_err(ApiError::DatabaseError)?;
+
+            (total, jobs)
+        }
+    } else {
+        // Default: return all jobs
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+            .fetch_one(&state.db)
+            .await
+            .map_err(ApiError::DatabaseError)?;
+
+        let jobs = sqlx::query_as::<_, Job>(
+            r#"SELECT 
+                id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
+                salary_min, salary_max, job_type, experience_level, requirements, benefits,
+                status, is_featured, created_at, updated_at, published_at
+            FROM jobs 
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?"#,
+        )
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(&state.db)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+        (total, jobs)
+    };
+
+    let job_responses: Vec<JobResponse> = jobs.into_iter().map(|j| j.into()).collect();
+
+    debug!(
+        job_count = job_responses.len(),
+        total = total,
+        page = page,
+        limit = limit,
+        "Admin loaded jobs list"
+    );
+
+    Ok(Json(JobListResponse {
+        jobs: job_responses,
+        total: total as usize,
+        page,
+        page_size: limit,
+    }))
+}
+
+/// GET /api/admin/jobs/:id - Get a job by ID (any status, for admin)
+pub async fn admin_get_job_by_id(
+    Extension(state_lock): Extension<Arc<RwLock<AppState>>>,
+    authed: AuthedUser,
+    Path(job_id): Path<String>,
+) -> Result<Json<JobResponse>, ApiError> {
+    if !authed.is_admin {
+        return Err(ApiError::Forbidden("admin privileges required".to_string()));
+    }
+
+    let state = state_lock.read().await.clone();
+
+    let job = sqlx::query_as::<_, Job>(
+        r#"SELECT 
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
+            salary_min, salary_max, job_type, experience_level, requirements, benefits,
+            status, is_featured, created_at, updated_at, published_at
+        FROM jobs 
+        WHERE id = ?"#,
+    )
+    .bind(&job_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?
+    .ok_or_else(|| ApiError::NotFound(format!("Job not found: {}", job_id)))?;
+
+    debug!(job_id = %job_id, job_title = %job.title, "Admin loaded job details");
+
+    Ok(Json(job.into()))
+}
 
 /// POST /api/admin/jobs - Create a new job
 pub async fn admin_create_job(
@@ -103,7 +251,7 @@ pub async fn admin_create_job(
     // Fetch the created job to return with all fields
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs WHERE id = ?"#,
@@ -260,7 +408,7 @@ pub async fn admin_update_job(
 
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs WHERE id = ?"#,
@@ -411,7 +559,7 @@ pub async fn admin_update_job_status(
     // Fetch updated job
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs WHERE id = ?"#,
@@ -491,7 +639,7 @@ pub async fn admin_toggle_featured_status(
     // Fetch updated job
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs WHERE id = ?"#,
@@ -594,7 +742,7 @@ pub async fn admin_save_job_draft(
     // Fetch the created draft
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs WHERE id = ?"#,
@@ -628,7 +776,7 @@ pub async fn admin_load_job_draft(
 
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs 
@@ -786,9 +934,9 @@ pub async fn bulk_delete_jobs(
         ));
     }
 
-    // Validate each job ID format
+    // Validate each job ID format (J_ prefix + alphanumeric)
     for job_id in &request.job_ids {
-        if uuid::Uuid::parse_str(job_id).is_err() {
+        if !job_id.starts_with("J_") || job_id.len() < 3 {
             return Err(ApiError::BadRequest(format!(
                 "Invalid job ID format: {}",
                 job_id

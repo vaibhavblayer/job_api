@@ -56,6 +56,8 @@ pub enum EntityPrefix {
     View,
     /// Connection (N_) - N for Network connection
     Connection,
+    /// ContentVersion (CV_) - Content version for inline AI editor
+    ContentVersion,
 }
 
 impl EntityPrefix {
@@ -81,6 +83,7 @@ impl EntityPrefix {
             EntityPrefix::Token => "K",
             EntityPrefix::View => "W",
             EntityPrefix::Connection => "N",
+            EntityPrefix::ContentVersion => "CV",
         }
     }
 }
@@ -246,6 +249,11 @@ pub fn generate_view_id() -> String {
 /// Generate a Connection ID (N_XXXXXX)
 pub fn generate_connection_id() -> String {
     generate_id(EntityPrefix::Connection)
+}
+
+/// Generate a Content Version ID (CV_XXXXXX)
+pub fn generate_content_version_id() -> String {
+    generate_id(EntityPrefix::ContentVersion)
 }
 
 #[cfg(test)]

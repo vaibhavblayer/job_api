@@ -163,9 +163,12 @@ pub async fn generate_job_description(
     }
 
     let prompt = format!(
-        "Generate a comprehensive and engaging job description for the position of '{}'. \
-        Include sections for: Overview, Key Responsibilities, and What We Offer. \
-        Make it professional yet approachable.",
+        "Write a concise job description for '{}' (400-600 words max). \
+        Structure with markdown:\n\
+        ## Overview\n2-3 sentences about the role.\n\n\
+        ## Key Responsibilities\n5-6 bullet points, each under 15 words.\n\n\
+        ## What You'll Bring\n4-5 must-have qualifications as bullet points.\n\n\
+        Be specific, avoid buzzwords, focus on impact.",
         req.job_title
     );
 
@@ -626,12 +629,15 @@ pub async fn generate_all_job_content(
 
     // Generate description
     let desc_prompt = format!(
-        "Generate a comprehensive job description for '{}' at {}. \
-        Include: Overview, Key Responsibilities, and What We Offer. \
-        Make it professional and engaging. \
-        Company industry: {}. Location: {}.",
+        "Write a concise job description for '{}' at {} (400-600 words max). \
+        Industry: {}. Location: {}.\n\n\
+        Structure with markdown:\n\
+        ## Overview\n2-3 sentences about the role and impact.\n\n\
+        ## Key Responsibilities\n5-6 bullet points, each under 15 words.\n\n\
+        ## What You'll Bring\n4-5 must-have qualifications.\n\n\
+        Be specific and direct. No corporate jargon.",
         req.job_title,
-        req.company_name.as_deref().unwrap_or("a leading company"),
+        req.company_name.as_deref().unwrap_or("our company"),
         req.company_industry.as_deref().unwrap_or("technology"),
         req.location.as_deref().unwrap_or("flexible")
     );
@@ -1083,21 +1089,35 @@ fn build_generation_prompt(
     let mut prompt_parts = vec![format!("Template Context: {}", template_context)];
 
     if let Some(name) = company_name {
-        prompt_parts.push(format!("Company Name: {}", name));
+        prompt_parts.push(format!("Company: {}", name));
     }
     if let Some(industry) = company_industry {
         prompt_parts.push(format!("Industry: {}", industry));
     }
     if let Some(description) = company_description {
-        prompt_parts.push(format!("Company Description: {}", description));
+        // Truncate long descriptions
+        let desc = if description.len() > 200 {
+            format!("{}...", &description[..200])
+        } else {
+            description.clone()
+        };
+        prompt_parts.push(format!("About: {}", desc));
     }
     if let Some(title) = job_title {
-        prompt_parts.push(format!("Job Title: {}", title));
+        prompt_parts.push(format!("Position: {}", title));
     }
 
+    // Add conciseness instruction based on field type
+    let length_guidance = match field_type {
+        "job description" => "Write concisely (400-600 words). Use bullet points. No filler.",
+        "job requirements" => "Keep each item under 10 words. Be specific.",
+        "job benefits" => "Keep each item under 8 words. Be concrete.",
+        _ => "Be concise and specific.",
+    };
+
     prompt_parts.push(format!(
-        "\nBased on the above context, generate a compelling and professional {}.",
-        field_type
+        "\nGenerate {} based on the above. {}",
+        field_type, length_guidance
     ));
 
     prompt_parts.join("\n")

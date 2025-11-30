@@ -64,12 +64,45 @@ pub async fn upload_resume(
             // Save file
             let resume_id = generate_resume_id();
             let safe_filename = format!("{}.pdf", resume_id);
-            let file_path = state.resumes_dir.join(&safe_filename);
 
-            tokio::fs::write(&file_path, &data).await.map_err(|e| {
-                error!(error = %e, "Failed to save resume");
-                ApiError::InternalServer("Failed to save resume".to_string())
-            })?;
+            // Check storage type setting
+            let storage_type = state
+                .settings_service
+                .get_setting("storage_type")
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "local".to_string());
+
+            if storage_type.starts_with("s3") {
+                // Upload to S3
+                let s3_key = format!("resumes/{}", safe_filename);
+                match state
+                    .aws_service
+                    .upload_file(data.to_vec(), &s3_key, "application/pdf")
+                    .await
+                {
+                    Ok(_url) => {
+                        info!(user_id = %authed.id, s3_key = %s3_key, "Resume uploaded to S3 successfully");
+                    }
+                    Err(e) => {
+                        warn!(error = %e, user_id = %authed.id, "Failed to upload resume to S3, falling back to local storage");
+                        // Fall back to local storage
+                        let file_path = state.resumes_dir.join(&safe_filename);
+                        tokio::fs::write(&file_path, &data).await.map_err(|e| {
+                            error!(error = %e, "Failed to save resume locally");
+                            ApiError::InternalServer("Failed to save resume".to_string())
+                        })?;
+                    }
+                }
+            } else {
+                // Save to local storage
+                let file_path = state.resumes_dir.join(&safe_filename);
+                tokio::fs::write(&file_path, &data).await.map_err(|e| {
+                    error!(error = %e, "Failed to save resume");
+                    ApiError::InternalServer("Failed to save resume".to_string())
+                })?;
+            }
 
             // Create database record
             let now = chrono::Utc::now().to_rfc3339();

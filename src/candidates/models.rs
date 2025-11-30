@@ -262,6 +262,8 @@ pub struct YouTubeVideoLinkRequest {
 pub struct Interview {
     pub id: String,
     pub application_id: String,
+    pub candidate_id: String,
+    pub job_id: Option<String>,
     pub scheduled_date: String,
     pub duration_minutes: i32,
     pub interview_type: String,
@@ -269,6 +271,7 @@ pub struct Interview {
     pub google_calendar_event_id: Option<String>,
     pub panel_members: String,
     pub notes: Option<String>,
+    pub status: Option<String>,
     pub created_by: String,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,

@@ -7,6 +7,8 @@ use axum::{
 /// Creates the companies router with all company-related routes
 pub fn companies_routes() -> Router {
     Router::new()
+        // Public company route (no auth required)
+        .route("/api/companies/:id", get(handlers::get_company_public))
         // Logo management routes
         .route("/api/admin/logo/upload", post(assets::upload_logo))
         .route("/api/admin/logos", get(assets::list_logos))

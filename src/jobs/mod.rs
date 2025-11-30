@@ -3,6 +3,7 @@
 pub mod handlers;
 pub mod models;
 pub mod routes;
+pub mod services;
 pub mod validators;
 
 #[cfg(test)]
@@ -11,3 +12,4 @@ mod tests;
 // Re-export commonly used items
 pub use models::*;
 pub use routes::jobs_routes;
+pub use services::ContentVersionsService;

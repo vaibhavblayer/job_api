@@ -1,5 +1,6 @@
 // src/admin/handlers/mod.rs
 
+pub mod contact;
 pub mod dashboard;
 pub mod exports;
 pub mod files;

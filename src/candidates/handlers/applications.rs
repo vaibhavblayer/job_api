@@ -1050,3 +1050,356 @@ async fn update_single_application_status(
 
     Ok(())
 }
+
+// ============================================================================
+// Job-Centric Candidate Management (Frontend Compatibility)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct ApproveCandidateRequest {
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RejectCandidateRequest {
+    pub reason: String,
+}
+
+/// Response type that matches frontend CandidateApplication expectations
+#[derive(Debug, Serialize)]
+pub struct CandidateApplicationResponse {
+    pub id: String,
+    pub job_id: String,
+    pub candidate_id: String,
+    pub resume_id: Option<String>,
+    pub current_stage: String,
+    pub status: String,
+    pub cover_letter: Option<String>,
+    pub applied_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub stage_history: Vec<StageHistoryEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StageHistoryEntry {
+    pub id: String,
+    pub stage: String,
+    pub changed_by: String,
+    pub changed_by_name: Option<String>,
+    pub notes: Option<String>,
+    pub changed_at: Option<String>,
+}
+
+/// POST /api/admin/jobs/:job_id/candidates/:candidate_id/approve - Approve candidate for next stage
+pub async fn approve_candidate_for_job(
+    Extension(state_lock): Extension<Arc<RwLock<AppState>>>,
+    authed: AuthedUser,
+    Path((job_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<ApproveCandidateRequest>,
+) -> Result<Json<CandidateApplicationResponse>, ApiError> {
+    let state = state_lock.read().await.clone();
+
+    if !authed.is_admin {
+        return Err(ApiError::Forbidden("Admin privileges required".to_string()));
+    }
+
+    // Find the application for this job and candidate
+    let application = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE job_id = ? AND user_id = ?"
+    )
+    .bind(&job_id)
+    .bind(&candidate_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?
+    .ok_or_else(|| ApiError::BadRequest("Application not found for this job and candidate".to_string()))?;
+
+    // Get next status
+    let next_status = get_next_status(&application.status)
+        .ok_or_else(|| ApiError::BadRequest("Application is already at final stage".to_string()))?;
+
+    let current_stage = status_to_stage(next_status);
+
+    // Update status
+    sqlx::query(
+        r#"
+        UPDATE applications 
+        SET status = ?, current_stage = ?, updated_at = datetime('now')
+        WHERE id = ?
+        "#,
+    )
+    .bind(next_status)
+    .bind(current_stage)
+    .bind(&application.id)
+    .execute(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Add to history
+    let history_id = generate_history_id();
+    let notes = request.notes.unwrap_or_else(|| format!("Approved and advanced to {} stage", next_status));
+    sqlx::query(
+        r#"
+        INSERT INTO application_status_history (id, application_id, status, changed_by, notes, changed_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        "#
+    )
+    .bind(&history_id)
+    .bind(&application.id)
+    .bind(next_status)
+    .bind(&authed.id)
+    .bind(&notes)
+    .execute(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Fetch updated application
+    let updated_application = sqlx::query_as::<_, Application>("SELECT * FROM applications WHERE id = ?")
+        .bind(&application.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+    // Fetch stage history
+    let history = sqlx::query_as::<_, ApplicationStatusHistory>(
+        "SELECT * FROM application_status_history WHERE application_id = ? ORDER BY changed_at DESC"
+    )
+    .bind(&application.id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Get admin name for history entries
+    let stage_history: Vec<StageHistoryEntry> = history.into_iter().map(|h| {
+        StageHistoryEntry {
+            id: h.id,
+            stage: status_to_stage(&h.status).to_string(),
+            changed_by: h.changed_by.clone(),
+            changed_by_name: None, // Could fetch from users table if needed
+            notes: h.notes,
+            changed_at: h.changed_at,
+        }
+    }).collect();
+
+    info!(
+        job_id = %job_id,
+        candidate_id = %candidate_id,
+        application_id = %application.id,
+        old_status = %application.status,
+        new_status = %next_status,
+        "Approved candidate for next stage"
+    );
+
+    // Note: Email is NOT auto-sent here - stage manager has manual email sending via AI generation
+
+    Ok(Json(CandidateApplicationResponse {
+        id: updated_application.id,
+        job_id: updated_application.job_id,
+        candidate_id: updated_application.user_id,
+        resume_id: updated_application.resume_id,
+        current_stage: current_stage.to_string(),
+        status: updated_application.status,
+        cover_letter: updated_application.cover_letter,
+        applied_at: updated_application.applied_at,
+        updated_at: updated_application.updated_at,
+        stage_history,
+    }))
+}
+
+/// POST /api/admin/jobs/:job_id/candidates/:candidate_id/reject - Reject candidate
+pub async fn reject_candidate_for_job(
+    Extension(state_lock): Extension<Arc<RwLock<AppState>>>,
+    authed: AuthedUser,
+    Path((job_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<RejectCandidateRequest>,
+) -> Result<Json<CandidateApplicationResponse>, ApiError> {
+    let state = state_lock.read().await.clone();
+
+    if !authed.is_admin {
+        return Err(ApiError::Forbidden("Admin privileges required".to_string()));
+    }
+
+    // Find the application for this job and candidate
+    let application = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE job_id = ? AND user_id = ?"
+    )
+    .bind(&job_id)
+    .bind(&candidate_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?
+    .ok_or_else(|| ApiError::BadRequest("Application not found for this job and candidate".to_string()))?;
+
+    // Update status to rejected
+    sqlx::query(
+        r#"
+        UPDATE applications 
+        SET status = 'rejected', current_stage = 'Rejected', updated_at = datetime('now')
+        WHERE id = ?
+        "#,
+    )
+    .bind(&application.id)
+    .execute(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Add to history
+    let history_id = generate_history_id();
+    sqlx::query(
+        r#"
+        INSERT INTO application_status_history (id, application_id, status, changed_by, notes, changed_at)
+        VALUES (?, ?, 'rejected', ?, ?, datetime('now'))
+        "#
+    )
+    .bind(&history_id)
+    .bind(&application.id)
+    .bind(&authed.id)
+    .bind(&request.reason)
+    .execute(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Fetch updated application
+    let updated_application = sqlx::query_as::<_, Application>("SELECT * FROM applications WHERE id = ?")
+        .bind(&application.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(ApiError::DatabaseError)?;
+
+    // Fetch stage history
+    let history = sqlx::query_as::<_, ApplicationStatusHistory>(
+        "SELECT * FROM application_status_history WHERE application_id = ? ORDER BY changed_at DESC"
+    )
+    .bind(&application.id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    let stage_history: Vec<StageHistoryEntry> = history.into_iter().map(|h| {
+        StageHistoryEntry {
+            id: h.id,
+            stage: status_to_stage(&h.status).to_string(),
+            changed_by: h.changed_by.clone(),
+            changed_by_name: None,
+            notes: h.notes,
+            changed_at: h.changed_at,
+        }
+    }).collect();
+
+    info!(
+        job_id = %job_id,
+        candidate_id = %candidate_id,
+        application_id = %application.id,
+        reason = %request.reason,
+        "Rejected candidate"
+    );
+
+    // Note: Email is NOT auto-sent here - stage manager has manual email sending via AI generation
+
+    Ok(Json(CandidateApplicationResponse {
+        id: updated_application.id,
+        job_id: updated_application.job_id,
+        candidate_id: updated_application.user_id,
+        resume_id: updated_application.resume_id,
+        current_stage: "Rejected".to_string(),
+        status: updated_application.status,
+        cover_letter: updated_application.cover_letter,
+        applied_at: updated_application.applied_at,
+        updated_at: updated_application.updated_at,
+        stage_history,
+    }))
+}
+
+// ============================================================================
+// Send Email to Candidate
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct SendCandidateEmailRequest {
+    pub subject: String,
+    pub content: String,
+    pub cc: Option<Vec<String>>,
+}
+
+/// POST /api/admin/jobs/:job_id/candidates/:candidate_id/email - Send email to candidate
+pub async fn send_candidate_email_for_job(
+    Extension(state_lock): Extension<Arc<RwLock<AppState>>>,
+    authed: AuthedUser,
+    Path((job_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<SendCandidateEmailRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let state = state_lock.read().await.clone();
+
+    if !authed.is_admin {
+        return Err(ApiError::Forbidden("Admin privileges required".to_string()));
+    }
+
+    // Find the application for this job and candidate
+    let application = sqlx::query_as::<_, Application>(
+        "SELECT * FROM applications WHERE job_id = ? AND user_id = ?"
+    )
+    .bind(&job_id)
+    .bind(&candidate_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?
+    .ok_or_else(|| ApiError::BadRequest("Application not found for this job and candidate".to_string()))?;
+
+    // Get candidate email
+    let candidate_email: String = sqlx::query_scalar(
+        "SELECT email FROM users WHERE id = ?"
+    )
+    .bind(&candidate_id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(ApiError::DatabaseError)?;
+
+    // Build recipient list
+    let mut recipients = vec![candidate_email.clone()];
+    if let Some(cc_list) = &request.cc {
+        recipients.extend(cc_list.clone());
+    }
+
+    // Send email via AWS SES
+    state
+        .aws_service
+        .send_email(recipients.clone(), &request.subject, &request.content, None)
+        .await
+        .map_err(|e| ApiError::ProcessingError(format!("Failed to send email: {}", e)))?;
+
+    // Log the email in email_history table if it exists
+    let email_id = crate::common::generate_history_id();
+    let cc_json = request.cc.as_ref().map(|cc| serde_json::to_string(cc).unwrap_or_default());
+    
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO email_history (id, application_id, candidate_id, job_id, subject, content, cc, sent_by, sent_at, email_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), 'manual')
+        "#
+    )
+    .bind(&email_id)
+    .bind(&application.id)
+    .bind(&candidate_id)
+    .bind(&job_id)
+    .bind(&request.subject)
+    .bind(&request.content)
+    .bind(&cc_json)
+    .bind(&authed.id)
+    .execute(&state.db)
+    .await;
+
+    info!(
+        job_id = %job_id,
+        candidate_id = %candidate_id,
+        candidate_email = %candidate_email,
+        subject = %request.subject,
+        recipient_count = recipients.len(),
+        "Email sent to candidate"
+    );
+
+    Ok(Json(serde_json::json!({
+        "message": "Email sent successfully",
+        "recipient": candidate_email,
+        "cc_count": request.cc.as_ref().map(|c| c.len()).unwrap_or(0)
+    })))
+}

@@ -12,9 +12,11 @@ use std::collections::HashMap;
 pub struct Job {
     pub id: String,
     pub title: String,
+    pub summary: Option<String>,
     pub description: Option<String>,
     pub location: Option<String>,
     pub company: Option<String>,
+    pub company_id: Option<String>,
     pub company_logo_url: Option<String>,
     pub job_image_url: Option<String>,
     pub salary_min: Option<i64>,
@@ -37,9 +39,11 @@ pub struct Job {
 pub struct JobResponse {
     pub id: String,
     pub title: String,
+    pub summary: Option<String>,
     pub description: Option<String>,
     pub location: Option<String>,
     pub company: Option<String>,
+    pub company_id: Option<String>,
     pub company_logo_url: Option<String>,
     pub job_image_url: Option<String>,
     pub salary_min: Option<i64>,
@@ -79,9 +83,11 @@ impl From<Job> for JobResponse {
         JobResponse {
             id: job.id,
             title: job.title,
+            summary: job.summary,
             description: job.description,
             location: job.location,
             company: job.company,
+            company_id: job.company_id,
             company_logo_url: job.company_logo_url,
             job_image_url: job.job_image_url,
             salary_min: job.salary_min,
@@ -340,4 +346,99 @@ pub struct CreateAITemplateRequest {
     pub name: String,
     pub company_id: String, // Required for AI templates
     pub ai_context: AITemplateContext,
+}
+
+// ============================================================================
+// Content Version Models (Inline AI Editor)
+// ============================================================================
+
+/// Content component types that can be versioned
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentComponentType {
+    Title,
+    Summary,
+    Description,
+    Requirements,
+    Benefits,
+    Image,
+}
+
+impl ContentComponentType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ContentComponentType::Title => "title",
+            ContentComponentType::Summary => "summary",
+            ContentComponentType::Description => "description",
+            ContentComponentType::Requirements => "requirements",
+            ContentComponentType::Benefits => "benefits",
+            ContentComponentType::Image => "image",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "title" => Some(ContentComponentType::Title),
+            "summary" => Some(ContentComponentType::Summary),
+            "description" => Some(ContentComponentType::Description),
+            "requirements" => Some(ContentComponentType::Requirements),
+            "benefits" => Some(ContentComponentType::Benefits),
+            "image" => Some(ContentComponentType::Image),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ContentComponentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// A single content version record
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ContentVersion {
+    pub id: String,
+    pub job_id: String,
+    pub component_type: String,
+    pub content: String,
+    pub prompt_used: Option<String>,
+    pub is_active: i32,
+    pub version_number: i32,
+    pub created_by: Option<String>,
+    pub created_at: String,
+}
+
+/// Response for getting content versions
+#[derive(Debug, Serialize)]
+pub struct ContentVersionsResponse {
+    pub active: Option<ContentVersion>,
+    pub history: Vec<ContentVersion>,
+    pub total: usize,
+}
+
+/// Request to generate new content
+#[derive(Debug, Deserialize)]
+pub struct GenerateContentRequest {
+    pub prompt: Option<String>,
+    pub tone: Option<String>, // "professional", "casual", "technical"
+}
+
+/// Response after generating content
+#[derive(Debug, Serialize)]
+pub struct GenerateContentResponse {
+    pub version: ContentVersion,
+}
+
+/// Response for activation
+#[derive(Debug, Serialize)]
+pub struct ActivateVersionResponse {
+    pub success: bool,
+    pub version: ContentVersion,
+}
+
+/// Response for deletion
+#[derive(Debug, Serialize)]
+pub struct DeleteVersionResponse {
+    pub success: bool,
 }

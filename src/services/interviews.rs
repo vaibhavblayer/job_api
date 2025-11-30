@@ -177,6 +177,52 @@ pub async fn schedule_interview(
         "Interview scheduled successfully"
     );
 
+    // Update application status to "interview_scheduled" (maps to "Interview Scheduled" stage)
+    // Only update if current status is "shortlisted" to maintain proper flow
+    // This is non-blocking - interview is created even if status update fails
+    let current_status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM applications WHERE id = ?"
+    )
+    .bind(&request.application_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(status) = current_status {
+        if status == "shortlisted" {
+            // Use 'interview_scheduled' status which maps to 'Interview Scheduled' stage
+            if let Err(e) = sqlx::query(
+                "UPDATE applications SET status = 'interview_scheduled', current_stage = 'Interview Scheduled', updated_at = datetime('now') WHERE id = ?"
+            )
+            .bind(&request.application_id)
+            .execute(pool)
+            .await
+            {
+                warn!(error = %e, "Failed to update application status, but interview was created");
+            } else {
+                // Add to status history
+                let history_id = crate::common::generate_history_id();
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO application_status_history (id, application_id, status, changed_by, notes, changed_at) VALUES (?, ?, 'interview_scheduled', ?, 'Interview scheduled', datetime('now'))"
+                )
+                .bind(&history_id)
+                .bind(&request.application_id)
+                .bind(created_by)
+                .execute(pool)
+                .await
+                {
+                    warn!(error = %e, "Failed to add status history entry");
+                }
+
+                info!(
+                    application_id = %request.application_id,
+                    "Application status updated to 'interview_scheduled' (Interview Scheduled)"
+                );
+            }
+        }
+    }
+
     // Save panelists to database for future suggestions
     for panel_member in &request.panel_members {
         if let Err(e) = crate::services::panelists::upsert_panelist(pool, panel_member).await {

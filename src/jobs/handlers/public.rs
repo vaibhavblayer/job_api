@@ -46,7 +46,7 @@ pub async fn list_jobs_or_featured(
         // Get featured jobs only
         sqlx::query_as::<_, Job>(
             r#"SELECT 
-                id, title, description, location, company, company_logo_url, job_image_url,
+                id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
                 salary_min, salary_max, job_type, experience_level, requirements, benefits,
                 status, is_featured, created_at, updated_at, published_at
             FROM jobs 
@@ -63,7 +63,7 @@ pub async fn list_jobs_or_featured(
         // Get all active jobs
         sqlx::query_as::<_, Job>(
             r#"SELECT 
-                id, title, description, location, company, company_logo_url, job_image_url,
+                id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
                 salary_min, salary_max, job_type, experience_level, requirements, benefits,
                 status, is_featured, created_at, updated_at, published_at
             FROM jobs 
@@ -108,7 +108,7 @@ pub async fn get_job_by_id(
     // Fetch the job, but only if it's active (published)
     let job = sqlx::query_as::<_, Job>(
         r#"SELECT 
-            id, title, description, location, company, company_logo_url, job_image_url,
+            id, title, summary, description, location, company, company_id, company_logo_url, job_image_url,
             salary_min, salary_max, job_type, experience_level, requirements, benefits,
             status, is_featured, created_at, updated_at, published_at
         FROM jobs 

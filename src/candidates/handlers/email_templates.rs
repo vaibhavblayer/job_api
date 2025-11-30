@@ -18,151 +18,95 @@ pub fn get_email_template(
         "reviewed" => EmailTemplate {
             subject: format!("Application Received - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #4F46E5;">Application Received</h2>
-                        <p>Dear {},</p>
-                        <p>Thank you for applying for the <strong>{}</strong> position at <strong>{}</strong>.</p>
-                        <p>We have received your application and our team is currently reviewing it. We appreciate your interest in joining our organization.</p>
-                        <p>We will contact you soon regarding the next steps in the hiring process.</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>Thanks for applying for <strong>{}</strong> at <strong>{}</strong>. We've received your application and will review it shortly.</p>
+<p>We'll be in touch with next steps soon.</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, job_title, company_name, company_name
             ),
         },
         "shortlisted" => EmailTemplate {
-            subject: format!("You've Been Shortlisted - {}", job_title),
+            subject: format!("You're Shortlisted! - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #10B981;">Congratulations! You've Been Shortlisted</h2>
-                        <p>Dear {},</p>
-                        <p>Great news! After reviewing your application for the <strong>{}</strong> position, we are pleased to inform you that you have been shortlisted for the next round.</p>
-                        <p>Your qualifications and experience have impressed our team, and we would like to move forward with your application.</p>
-                        <p>We will be in touch shortly with details about the next steps in our selection process.</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
-                candidate_name, job_title, company_name
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>Great news! You've been shortlisted for the <strong>{}</strong> position at <strong>{}</strong>.</p>
+<p>We'll contact you soon to discuss next steps.</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
+                candidate_name, job_title, company_name, company_name
             ),
         },
         "interviewed" => EmailTemplate {
             subject: format!("Interview Invitation - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #4F46E5;">Interview Invitation</h2>
-                        <p>Dear {},</p>
-                        <p>We are pleased to invite you for an interview for the <strong>{}</strong> position at <strong>{}</strong>.</p>
-                        <p>We were impressed with your application and would like to learn more about your experience and discuss how you can contribute to our team.</p>
-                        <p>Our team will contact you shortly to schedule a convenient time for the interview.</p>
-                        <p>We look forward to speaking with you!</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>We'd like to invite you for an interview for <strong>{}</strong> at <strong>{}</strong>.</p>
+<p>We'll reach out shortly to schedule a time that works for you.</p>
+<p>Looking forward to speaking with you!</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, job_title, company_name, company_name
             ),
         },
         "offered" => EmailTemplate {
             subject: format!("Job Offer - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #10B981;">Congratulations! Job Offer</h2>
-                        <p>Dear {},</p>
-                        <p>We are delighted to offer you the position of <strong>{}</strong> at <strong>{}</strong>!</p>
-                        <p>After careful consideration, we believe you would be an excellent addition to our team. Your skills, experience, and enthusiasm have impressed us throughout the selection process.</p>
-                        <p>We will send you a formal offer letter with all the details including compensation, benefits, and start date shortly.</p>
-                        <p>We look forward to welcoming you to our team!</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>Congratulations! We're pleased to offer you the <strong>{}</strong> position at <strong>{}</strong>.</p>
+<p>You'll receive a formal offer letter with compensation details shortly.</p>
+<p>Welcome to the team!</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, job_title, company_name, company_name
             ),
         },
         "hired" => EmailTemplate {
-            subject: format!("Welcome to {} - {}", company_name, job_title),
+            subject: format!("Welcome to {}!", company_name),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #10B981;">Welcome Aboard!</h2>
-                        <p>Dear {},</p>
-                        <p>Welcome to <strong>{}</strong>! We are thrilled to have you join our team as <strong>{}</strong>.</p>
-                        <p>We believe you will make significant contributions to our organization and we're excited to see you grow with us.</p>
-                        <p>You will receive additional information about your onboarding process, including your start date, required documents, and first-day details.</p>
-                        <p>Once again, welcome to the team!</p>
-                        <p>Best regards,<br>
-                        {} Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>Welcome to <strong>{}</strong>! We're excited to have you join us as <strong>{}</strong>.</p>
+<p>You'll receive onboarding details including your start date and first-day information soon.</p>
+<p>See you soon!</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, company_name, job_title, company_name
             ),
         },
         "rejected" => EmailTemplate {
-            subject: format!("Application Status Update - {}", job_title),
+            subject: format!("Application Update - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #6B7280;">Application Status Update</h2>
-                        <p>Dear {},</p>
-                        <p>Thank you for your interest in the <strong>{}</strong> position at <strong>{}</strong> and for taking the time to apply.</p>
-                        <p>After careful consideration, we have decided to move forward with other candidates whose qualifications more closely match our current needs.</p>
-                        <p>We appreciate your interest in our organization and encourage you to apply for future opportunities that match your skills and experience.</p>
-                        <p>We wish you all the best in your job search.</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>Thank you for your interest in <strong>{}</strong> at <strong>{}</strong>.</p>
+<p>After careful review, we've decided to move forward with other candidates. We encourage you to apply for future openings that match your skills.</p>
+<p>Best of luck in your search!</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, job_title, company_name, company_name
             ),
         },
         _ => EmailTemplate {
             subject: format!("Application Update - {}", job_title),
             body: format!(
-                r#"
-                <html>
-                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-                        <h2 style="color: #4F46E5;">Application Status Update</h2>
-                        <p>Dear {},</p>
-                        <p>This is to inform you that there has been an update to your application for the <strong>{}</strong> position at <strong>{}</strong>.</p>
-                        <p>We will contact you if we need any additional information or to discuss next steps.</p>
-                        <p>Thank you for your continued interest.</p>
-                        <p>Best regards,<br>
-                        {} Hiring Team</p>
-                    </div>
-                </body>
-                </html>
-                "#,
+                r#"<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+<div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+<p>Hi {},</p>
+<p>There's an update on your application for <strong>{}</strong> at <strong>{}</strong>.</p>
+<p>We'll be in touch if we need anything further.</p>
+<p>Best,<br>{} Team</p>
+</div></body></html>"#,
                 candidate_name, job_title, company_name, company_name
             ),
         },
@@ -173,7 +117,8 @@ pub fn get_next_status(current_status: &str) -> Option<&'static str> {
     match current_status {
         "submitted" => Some("reviewed"),
         "reviewed" => Some("shortlisted"),
-        "shortlisted" => Some("interviewed"),
+        "shortlisted" => Some("interview_scheduled"), // Now requires scheduling interview
+        "interview_scheduled" => Some("interviewed"),
         "interviewed" => Some("offered"),
         "offered" => Some("hired"),
         _ => None,
@@ -186,6 +131,7 @@ pub fn status_to_stage(status: &str) -> &'static str {
         "submitted" => "Applied",
         "reviewed" => "Resume Review",
         "shortlisted" => "Shortlisted",
+        "interview_scheduled" => "Interview Scheduled",
         "interviewed" => "Interview Completed",
         "offered" => "Offer Extended",
         "hired" => "Hired",
@@ -201,9 +147,10 @@ pub fn get_status_order(status: &str) -> Option<u8> {
         "submitted" => Some(0),
         "reviewed" => Some(1),
         "shortlisted" => Some(2),
-        "interviewed" => Some(3),
-        "offered" => Some(4),
-        "hired" => Some(5),
+        "interview_scheduled" => Some(3),
+        "interviewed" => Some(4),
+        "offered" => Some(5),
+        "hired" => Some(6),
         "rejected" => Some(99), // Can happen at any stage
         "withdrawn" => Some(98), // Can happen at any stage
         _ => None,

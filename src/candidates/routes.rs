@@ -28,6 +28,19 @@ pub fn candidates_routes() -> Router {
             "/api/admin/jobs/:id/applications",
             get(handlers::get_job_applications),
         )
+        // Job-centric candidate management routes (for frontend compatibility)
+        .route(
+            "/api/admin/jobs/:job_id/candidates/:candidate_id/approve",
+            post(handlers::approve_candidate_for_job),
+        )
+        .route(
+            "/api/admin/jobs/:job_id/candidates/:candidate_id/reject",
+            post(handlers::reject_candidate_for_job),
+        )
+        .route(
+            "/api/admin/jobs/:job_id/candidates/:candidate_id/email",
+            post(handlers::send_candidate_email_for_job),
+        )
         .route(
             "/api/admin/applications/analytics",
             get(handlers::get_application_analytics),

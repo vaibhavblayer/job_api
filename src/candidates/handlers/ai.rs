@@ -76,15 +76,31 @@ pub async fn generate_candidate_email(
     });
 
     let prompt = format!(
-        "Generate a professional email for {} regarding their application for the {} position at {}. \
-        This is a {} email. \
-        Make it warm, professional, and personalized. \
-        Include a clear subject line at the beginning (format: 'Subject: ...'). \
+        "Write a brief professional email (under 100 words, excluding subject line).\n\n\
+        DETAILS (use these exact values, NO placeholders):\n\
+        - Candidate: {}\n\
+        - Position: {}\n\
+        - Company: {}\n\
+        - Purpose: {}\n\n\
+        FORMAT:\n\
+        Subject: [clear subject line]\n\n\
+        [Brief greeting using '{}']\n\
+        [2-3 sentences max - get to the point]\n\
+        [Clear next step or call to action]\n\
+        [Sign off]\n\n\
+        RULES:\n\
+        - Use actual names: {}, {}, {}\n\
+        - NO placeholders like [Name] or [Company]\n\
+        - Be warm but concise\n\
         {}",
         req.candidate_name,
         req.job_title,
         req.company_name,
         stage_description,
+        req.candidate_name,
+        req.candidate_name,
+        req.job_title,
+        req.company_name,
         req.additional_context.as_deref().unwrap_or("")
     );
 

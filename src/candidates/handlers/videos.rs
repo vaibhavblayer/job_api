@@ -181,21 +181,6 @@ pub async fn delete_video(
         .map_err(ApiError::DatabaseError)?
         .ok_or_else(|| ApiError::BadRequest("Video not found".to_string()))?;
 
-    // Check if video is attached to any applications
-    let application_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM applications WHERE video_id = ?"
-    )
-    .bind(&id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(ApiError::DatabaseError)?;
-
-    if application_count > 0 {
-        return Err(ApiError::BadRequest(
-            format!("Cannot delete video. It is attached to {} application(s). Please remove it from those applications first.", application_count)
-        ));
-    }
-
     // Extract S3 key from URL (skip for YouTube videos)
     let s3_key = if let Some(url) = &video.s3_url {
         if let Some(key) = url.split(".amazonaws.com/").nth(1) {

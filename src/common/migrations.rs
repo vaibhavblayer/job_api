@@ -25,6 +25,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     create_core_tables(pool).await?;
     create_company_tables(pool).await?;
     create_job_tables(pool).await?;
+    create_content_version_tables(pool).await?;
     create_application_tables(pool).await?;
     create_interview_tables(pool).await?;
     create_messaging_tables(pool).await?;
@@ -133,6 +134,7 @@ async fn init_default_settings(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 async fn drop_all_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     // Drop tables in reverse dependency order
     let tables = vec![
+        "job_content_versions",
         "job_social_images",
         "offer_letters",
         "interview_interviewers",
@@ -455,6 +457,213 @@ async fn create_job_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Create job content version tables for inline AI editing
+async fn create_content_version_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Job content versions table - stores AI-generated content versions
+    // for title, summary, description, requirements, benefits, and image
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS job_content_versions (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            component_type TEXT NOT NULL CHECK (component_type IN ('title', 'summary', 'description', 'requirements', 'benefits', 'image')),
+            content TEXT NOT NULL,
+            prompt_used TEXT,
+            is_active INTEGER DEFAULT 0,
+            version_number INTEGER NOT NULL,
+            created_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY(created_by) REFERENCES users(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Create indexes for efficient queries
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_component ON job_content_versions(job_id, component_type)"
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_active ON job_content_versions(job_id, component_type, is_active)"
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_id ON job_content_versions(job_id)"
+    )
+    .execute(pool)
+    .await?;
+
+    // Add summary column to jobs table if it doesn't exist
+    let _ = sqlx::query("ALTER TABLE jobs ADD COLUMN summary TEXT")
+        .execute(pool)
+        .await;
+
+    // Migrate job_content_versions to include 'summary' in CHECK constraint
+    migrate_job_content_versions_check_constraint(pool).await?;
+
+    Ok(())
+}
+
+/// Migration to update job_content_versions CHECK constraint to include 'summary'
+/// SQLite doesn't support modifying CHECK constraints, so we recreate the table
+async fn migrate_job_content_versions_check_constraint(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use sqlx::Row;
+
+    // First, check if we have a leftover _new table from a failed migration
+    // If so, we need to recover by dropping the old table and renaming the new one
+    let has_new_table: Option<(String,)> = sqlx::query_as(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='job_content_versions_new'"
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if has_new_table.is_some() {
+        tracing::info!("Recovering from failed migration - found job_content_versions_new table");
+        
+        // Check if old table still exists
+        let has_old_table: Option<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='job_content_versions'"
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        if has_old_table.is_some() {
+            // Drop the old table first (this will also drop its indexes)
+            sqlx::query("DROP TABLE IF EXISTS job_content_versions")
+                .execute(pool)
+                .await?;
+            tracing::info!("Dropped old job_content_versions table");
+        }
+
+        // Drop any orphaned indexes that might conflict
+        let _ = sqlx::query("DROP INDEX IF EXISTS idx_job_content_versions_job_component")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DROP INDEX IF EXISTS idx_job_content_versions_active")
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DROP INDEX IF EXISTS idx_job_content_versions_job_id")
+            .execute(pool)
+            .await;
+        tracing::info!("Dropped any orphaned indexes");
+
+        // Rename new table to original name
+        sqlx::query("ALTER TABLE job_content_versions_new RENAME TO job_content_versions")
+            .execute(pool)
+            .await?;
+        tracing::info!("Renamed job_content_versions_new to job_content_versions");
+
+        // Recreate indexes
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_component ON job_content_versions(job_id, component_type)"
+        )
+        .execute(pool)
+        .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_job_content_versions_active ON job_content_versions(job_id, component_type, is_active)"
+        )
+        .execute(pool)
+        .await;
+        let _ = sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_id ON job_content_versions(job_id)"
+        )
+        .execute(pool)
+        .await;
+
+        tracing::info!("Successfully recovered job_content_versions migration");
+        return Ok(());
+    }
+
+    // Check if the constraint already includes 'image'
+    let needs_migration = sqlx::query(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='job_content_versions'",
+    )
+    .fetch_optional(pool)
+    .await?
+    .map(|row: sqlx::sqlite::SqliteRow| {
+        let sql: String = row.get("sql");
+        // Check if the CHECK constraint already includes 'image'
+        !sql.contains("'image'")
+    })
+    .unwrap_or(false);
+
+    if !needs_migration {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating job_content_versions table to support 'image' component type...");
+
+    // Step 1: Create new table with updated CHECK constraint
+    sqlx::query(
+        r#"
+        CREATE TABLE job_content_versions_new (
+            id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            component_type TEXT NOT NULL CHECK (component_type IN ('title', 'summary', 'description', 'requirements', 'benefits', 'image')),
+            content TEXT NOT NULL,
+            prompt_used TEXT,
+            is_active INTEGER DEFAULT 0,
+            version_number INTEGER NOT NULL,
+            created_by TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY(created_by) REFERENCES users(id)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // Step 2: Copy data from old table to new table
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO job_content_versions_new (id, job_id, component_type, content, prompt_used, is_active, version_number, created_by, created_at)
+        SELECT id, job_id, component_type, content, prompt_used, is_active, version_number, created_by, created_at
+        FROM job_content_versions
+        "#,
+    )
+    .execute(pool)
+    .await;
+
+    // Step 3: Drop old table
+    sqlx::query("DROP TABLE job_content_versions")
+        .execute(pool)
+        .await?;
+
+    // Step 4: Rename new table to original name
+    sqlx::query("ALTER TABLE job_content_versions_new RENAME TO job_content_versions")
+        .execute(pool)
+        .await?;
+
+    // Step 5: Recreate indexes
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_component ON job_content_versions(job_id, component_type)"
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_active ON job_content_versions(job_id, component_type, is_active)"
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_job_content_versions_job_id ON job_content_versions(job_id)"
+    )
+    .execute(pool)
+    .await;
+
+    tracing::info!("Successfully migrated job_content_versions table to support 'image' component type");
+
+    Ok(())
+}
+
 /// Migration to update job_templates CHECK constraint to include 'ai' template type
 /// SQLite doesn't support modifying CHECK constraints, so we recreate the table
 async fn migrate_job_templates_check_constraint(pool: &SqlitePool) -> Result<(), sqlx::Error> {
@@ -601,7 +810,7 @@ async fn create_application_tables(pool: &SqlitePool) -> Result<(), sqlx::Error>
     .await?;
 
     // Applications table
-    // Status values: submitted, reviewed, shortlisted, interviewed, offered, hired, rejected, withdrawn
+    // Status values: submitted, reviewed, shortlisted, interview_scheduled, interviewed, offered, hired, rejected, withdrawn
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS applications (
@@ -610,7 +819,7 @@ async fn create_application_tables(pool: &SqlitePool) -> Result<(), sqlx::Error>
             job_id TEXT NOT NULL,
             resume_id TEXT,
             status TEXT DEFAULT 'submitted' CHECK (status IN (
-                'submitted', 'reviewed', 'shortlisted', 'interviewed', 
+                'submitted', 'reviewed', 'shortlisted', 'interview_scheduled', 'interviewed', 
                 'offered', 'hired', 'rejected', 'withdrawn'
             )),
             current_stage TEXT DEFAULT 'Applied' CHECK (current_stage IN (
@@ -629,6 +838,10 @@ async fn create_application_tables(pool: &SqlitePool) -> Result<(), sqlx::Error>
     )
     .execute(pool)
     .await?;
+
+    // Migration: Add interview_scheduled to status CHECK constraint
+    // SQLite doesn't support ALTER TABLE to modify constraints, so we need to handle this
+    migrate_applications_status_constraint(pool).await?;
 
     // Application status history table
     sqlx::query(
@@ -726,6 +939,169 @@ async fn create_application_tables(pool: &SqlitePool) -> Result<(), sqlx::Error>
     let _ = sqlx::query("ALTER TABLE videos ADD COLUMN youtube_description TEXT")
         .execute(pool)
         .await;
+
+    Ok(())
+}
+
+/// Migration to update applications CHECK constraint to include 'interview_scheduled' status
+/// SQLite doesn't support ALTER TABLE to modify CHECK constraints, so we recreate the table
+/// using the recommended SQLite approach: https://www.sqlite.org/lang_altertable.html#otheralter
+async fn migrate_applications_status_constraint(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use sqlx::Row;
+
+    // Check if the constraint already includes 'interview_scheduled' by checking the table schema
+    let needs_migration = sqlx::query(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='applications'",
+    )
+    .fetch_optional(pool)
+    .await?
+    .map(|row: sqlx::sqlite::SqliteRow| {
+        let sql: String = row.get("sql");
+        // Check if the CHECK constraint already includes 'interview_scheduled'
+        !sql.contains("interview_scheduled")
+    })
+    .unwrap_or(false);
+
+    if !needs_migration {
+        return Ok(());
+    }
+
+    tracing::info!("Migrating applications table to support 'interview_scheduled' status...");
+
+    // Get a dedicated connection from the pool for this migration
+    // This ensures PRAGMA foreign_keys = OFF stays in effect for all operations
+    let mut conn = pool.acquire().await?;
+
+    // Step 1: Disable foreign key enforcement for this connection
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+
+    // Verify foreign keys are disabled
+    let fk_status: (i32,) = sqlx::query_as("PRAGMA foreign_keys")
+        .fetch_one(&mut *conn)
+        .await?;
+    tracing::info!(foreign_keys_enabled = fk_status.0, "Foreign key status");
+
+    // Clean up any leftover temp table from previous failed migrations
+    let _ = sqlx::query("DROP TABLE IF EXISTS applications_new")
+        .execute(&mut *conn)
+        .await;
+
+    // Step 2: Create new table with updated CHECK constraint
+    sqlx::query(
+        r#"
+        CREATE TABLE applications_new (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            job_id TEXT NOT NULL,
+            resume_id TEXT,
+            status TEXT DEFAULT 'submitted' CHECK (status IN (
+                'submitted', 'reviewed', 'shortlisted', 'interview_scheduled', 'interviewed', 
+                'offered', 'hired', 'rejected', 'withdrawn'
+            )),
+            current_stage TEXT DEFAULT 'Applied' CHECK (current_stage IN (
+                'Applied', 'Resume Review', 'Shortlisted', 'Interview Scheduled',
+                'Interview Completed', 'Offer Extended', 'Hired', 'Rejected'
+            )),
+            cover_letter TEXT,
+            applied_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(user_id, job_id),
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+            FOREIGN KEY(resume_id) REFERENCES resumes(id) ON DELETE SET NULL
+        )
+        "#,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // Step 3: Copy data from old table to new table
+    let copy_result = sqlx::query(
+        r#"
+        INSERT INTO applications_new (id, user_id, job_id, resume_id, status, current_stage, cover_letter, applied_at, updated_at)
+        SELECT id, user_id, job_id, resume_id, status, current_stage, cover_letter, applied_at, updated_at
+        FROM applications
+        "#,
+    )
+    .execute(&mut *conn)
+    .await;
+
+    if let Err(e) = copy_result {
+        tracing::error!(error = %e, "Failed to copy applications data");
+        let _ = sqlx::query("DROP TABLE IF EXISTS applications_new")
+            .execute(&mut *conn)
+            .await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await?;
+        return Err(e);
+    }
+
+    // Step 4: Drop old table
+    let drop_result = sqlx::query("DROP TABLE applications")
+        .execute(&mut *conn)
+        .await;
+
+    if let Err(e) = drop_result {
+        tracing::error!(error = %e, "Failed to drop old applications table");
+        let _ = sqlx::query("DROP TABLE IF EXISTS applications_new")
+            .execute(&mut *conn)
+            .await;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await?;
+        return Err(e);
+    }
+
+    // Step 5: Rename new table to original name
+    sqlx::query("ALTER TABLE applications_new RENAME TO applications")
+        .execute(&mut *conn)
+        .await?;
+
+    // Step 6: Recreate indexes
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_applications_user ON applications(user_id)",
+    )
+    .execute(&mut *conn)
+    .await;
+    let _ =
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(job_id)")
+            .execute(&mut *conn)
+            .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)",
+    )
+    .execute(&mut *conn)
+    .await;
+    let _ = sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_applications_stage ON applications(current_stage)",
+    )
+    .execute(&mut *conn)
+    .await;
+
+    // Step 7: Re-enable foreign key enforcement
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await?;
+
+    // Step 8: Verify foreign key integrity
+    let fk_check: Vec<(String, i64, String, i64)> =
+        sqlx::query_as("PRAGMA foreign_key_check(applications)")
+            .fetch_all(&mut *conn)
+            .await?;
+
+    if !fk_check.is_empty() {
+        tracing::warn!(
+            violations = fk_check.len(),
+            "Foreign key violations found after migration"
+        );
+    }
+
+    tracing::info!(
+        "Successfully migrated applications table to support 'interview_scheduled' status"
+    );
 
     Ok(())
 }
@@ -1075,6 +1451,7 @@ async fn sync_application_stages(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         ("submitted", "Applied"),
         ("reviewed", "Resume Review"),
         ("shortlisted", "Shortlisted"),
+        ("interview_scheduled", "Interview Scheduled"),
         ("interviewed", "Interview Completed"),
         ("offered", "Offer Extended"),
         ("hired", "Hired"),

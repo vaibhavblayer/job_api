@@ -9,6 +9,11 @@ use super::handlers;
 
 pub fn admin_routes() -> Router {
     Router::new()
+        // Public contact form endpoint
+        .route(
+            "/api/public/contact",
+            post(handlers::contact::submit_contact_form),
+        )
         // Dashboard and analytics endpoints
         .route(
             "/api/admin/dashboard/metrics",

@@ -616,13 +616,19 @@ impl OpenAIService {
                 "You are an expert resume analyzer. Extract key information from resumes including skills, experience, education, and provide a quality score. Be thorough and accurate.".to_string()
             }
             TextGenerationPurpose::EmailGeneration | TextGenerationPurpose::EmailComposition => {
-                "You are a professional email writer. Generate clear, professional, and personalized emails based on the provided context and template. Maintain a friendly yet professional tone.".to_string()
+                "You are a professional email writer. Write brief, direct emails under 100 words. \
+                Never use placeholders like [Name], [Company], [Position] - always use the actual values provided. \
+                Be warm but concise. Get to the point quickly.".to_string()
             }
             TextGenerationPurpose::MessageResponses => {
                 "You are a helpful assistant responding to candidate inquiries. Provide clear, accurate, and empathetic responses. Be professional yet approachable.".to_string()
             }
             TextGenerationPurpose::JobDescriptionGeneration | TextGenerationPurpose::JobDescription => {
-                "You are an expert job description writer. Create compelling, clear, and comprehensive job descriptions that attract qualified candidates. Include all necessary details while maintaining readability.".to_string()
+                "You are an expert job description writer. Write concise, scannable job descriptions between 400-600 words. \
+                Use bullet points for responsibilities and requirements. \
+                Avoid corporate jargon and filler phrases. \
+                Focus on what candidates need to know: role overview, key responsibilities, must-have skills, and what makes this opportunity compelling. \
+                Be direct and specific.".to_string()
             }
         }
     }

@@ -5,7 +5,7 @@ use axum::{
     Router,
 };
 
-use super::handlers::{self, ai, images};
+use super::handlers::{self, ai, content_versions, images};
 
 /// Create the jobs router with all job-related routes
 pub fn jobs_routes() -> Router {
@@ -20,6 +20,23 @@ pub fn jobs_routes() -> Router {
         .route("/api/admin/jobs/ai/generate-social-post", post(ai::generate_social_post))
         .route("/api/admin/jobs/ai/generate-all", post(ai::generate_all_job_content))
         .route("/api/admin/jobs/ai/generate-from-template", post(ai::generate_from_ai_template))
+        // Content version routes (Inline AI Editor)
+        .route(
+            "/api/admin/jobs/:job_id/content/:component_type/versions",
+            get(content_versions::get_content_versions),
+        )
+        .route(
+            "/api/admin/jobs/:job_id/content/:component_type/generate",
+            post(content_versions::generate_content),
+        )
+        .route(
+            "/api/admin/jobs/:job_id/content/:component_type/versions/:version_id/activate",
+            post(content_versions::activate_version),
+        )
+        .route(
+            "/api/admin/jobs/:job_id/content/:component_type/versions/:version_id",
+            delete(content_versions::delete_version),
+        )
         // Job image management routes
         .route("/api/admin/jobs/upload-image", post(images::upload_job_image))
         .route("/api/job-images/:type/:filename", get(images::serve_job_image))
@@ -31,12 +48,12 @@ pub fn jobs_routes() -> Router {
         .route("/api/jobs/:id/stats", get(handlers::get_job_stats))
         .route("/api/public/stats", get(handlers::get_public_stats))
         // Admin job management routes
-        .route("/api/admin/jobs", post(handlers::admin_create_job))
+        .route("/api/admin/jobs", get(handlers::admin_list_jobs).post(handlers::admin_create_job))
+        // NOTE: Specific parameterized routes must come BEFORE generic :id routes
         .route(
-            "/api/admin/jobs/:id",
-            put(handlers::admin_update_job).delete(handlers::admin_delete_job),
+            "/api/admin/jobs/:job_id/generate-image",
+            post(images::generate_job_image),
         )
-        // Enhanced job management endpoints
         .route(
             "/api/admin/jobs/:id/status",
             patch(handlers::admin_update_job_status),
@@ -44,6 +61,12 @@ pub fn jobs_routes() -> Router {
         .route(
             "/api/admin/jobs/:id/toggle-featured",
             patch(handlers::admin_toggle_featured_status),
+        )
+        .route(
+            "/api/admin/jobs/:id",
+            get(handlers::admin_get_job_by_id)
+                .put(handlers::admin_update_job)
+                .delete(handlers::admin_delete_job),
         )
         .route(
             "/api/admin/jobs/draft",

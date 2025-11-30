@@ -407,3 +407,20 @@ pub async fn save_url_as_company_asset(
 
     Ok((StatusCode::CREATED, Json(asset)))
 }
+
+// ============================================================================
+// Public Company Handlers (No Auth Required)
+// ============================================================================
+
+/// GET /api/companies/:id - Get company by ID (public endpoint)
+pub async fn get_company_public(
+    Extension(state): Extension<Arc<RwLock<AppState>>>,
+    Path(company_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let app_state = state.read().await;
+    let companies_service = CompaniesService::new(app_state.db.clone());
+
+    let company = companies_service.get_company_by_id(&company_id).await?;
+
+    Ok(Json(company))
+}

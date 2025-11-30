@@ -507,13 +507,14 @@ async fn download_and_store_avatar(
 
     // Validate file type
     let infer = Infer::new();
-    let is_valid = if let Some(info) = infer.get(&bytes) {
-        matches!(
-            info.mime_type(),
-            "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp"
+    let (is_valid, content_type) = if let Some(info) = infer.get(&bytes) {
+        let mime = info.mime_type();
+        (
+            matches!(mime, "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp"),
+            mime.to_string(),
         )
     } else {
-        false
+        (false, "application/octet-stream".to_string())
     };
 
     if !is_valid {
@@ -522,21 +523,53 @@ async fn download_and_store_avatar(
         ));
     }
 
-    // Generate filename and save
+    // Generate filename
     let extension = get_extension_from_url(external_url).unwrap_or("jpg");
     let filename = format!("avatar_{}_{}.{}", user_id, generate_raw_id(8), extension);
-    let file_path = state.avatars_dir.join(&filename);
 
-    // Save file
-    tokio_fs::write(&file_path, &bytes).await.map_err(|e| {
-        error!(error = %e, file_path = %file_path.display(), "Failed to save avatar file");
-        ApiError::InternalServer("Failed to save avatar file".to_string())
-    })?;
+    // Check storage type setting
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
 
-    // Generate public URL - use relative URL (frontend will prepend API base)
-    let avatar_url = format!("/api/avatars/{}", filename);
+    let avatar_url = if storage_type.starts_with("s3") {
+        // Upload to S3
+        let s3_key = format!("avatars/{}", filename);
+        match state
+            .aws_service
+            .upload_file(bytes.to_vec(), &s3_key, &content_type)
+            .await
+        {
+            Ok(url) => {
+                info!(user_id = %user_id, s3_key = %s3_key, "Avatar uploaded to S3 successfully");
+                url
+            }
+            Err(e) => {
+                warn!(error = %e, user_id = %user_id, "Failed to upload avatar to S3, falling back to local storage");
+                // Fall back to local storage
+                let file_path = state.avatars_dir.join(&filename);
+                tokio_fs::write(&file_path, &bytes).await.map_err(|e| {
+                    error!(error = %e, file_path = %file_path.display(), "Failed to save avatar file locally");
+                    ApiError::InternalServer("Failed to save avatar file".to_string())
+                })?;
+                format!("/api/avatars/{}", filename)
+            }
+        }
+    } else {
+        // Save to local storage
+        let file_path = state.avatars_dir.join(&filename);
+        tokio_fs::write(&file_path, &bytes).await.map_err(|e| {
+            error!(error = %e, file_path = %file_path.display(), "Failed to save avatar file");
+            ApiError::InternalServer("Failed to save avatar file".to_string())
+        })?;
+        format!("/api/avatars/{}", filename)
+    };
 
-    info!(user_id = %user_id, filename = %filename, "Avatar file saved successfully");
+    info!(user_id = %user_id, filename = %filename, storage_type = %storage_type, "Avatar file saved successfully");
 
     Ok(avatar_url)
 }

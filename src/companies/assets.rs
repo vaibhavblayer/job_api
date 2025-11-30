@@ -199,9 +199,40 @@ pub async fn delete_logo_file(
 // Helper functions
 
 async fn save_logo_file(state: &AppState, data: &[u8]) -> Result<String, ApiError> {
+    use tracing::{info, warn};
+    
     let filename = format!("{}.png", generate_raw_id(8));
-    let file_path = state.logos_dir.join(&filename);
 
+    // Check storage type setting
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
+
+    if storage_type.starts_with("s3") {
+        // Upload to S3
+        let s3_key = format!("logos/{}", filename);
+        match state
+            .aws_service
+            .upload_file(data.to_vec(), &s3_key, "image/png")
+            .await
+        {
+            Ok(_url) => {
+                info!(s3_key = %s3_key, "Logo uploaded to S3 successfully");
+                return Ok(filename);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to upload logo to S3, falling back to local storage");
+                // Fall through to local storage
+            }
+        }
+    }
+
+    // Save to local storage
+    let file_path = state.logos_dir.join(&filename);
     tokio::fs::write(&file_path, data)
         .await
         .map_err(|_| ApiError::InternalServer("Failed to save logo".to_string()))?;
