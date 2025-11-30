@@ -188,9 +188,10 @@ impl AWSService {
                 AWSError::S3Error(format!("Upload failed: {}", e))
             })?;
 
-        let url = self.get_file_url(file_name, false).await?;
+        // Use CloudFront URL if configured, otherwise fall back to S3
+        let url = self.get_file_url(file_name, true).await?;
 
-        info!(key = %file_name, bucket = %bucket, "File uploaded to S3 successfully");
+        info!(key = %file_name, bucket = %bucket, url = %url, "File uploaded to S3 successfully");
         Ok(url)
     }
 
