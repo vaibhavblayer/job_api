@@ -999,15 +999,44 @@ pub async fn download_resume(
     .map_err(ApiError::DatabaseError)?
     .ok_or_else(|| ApiError::BadRequest("Resume not found".to_string()))?;
 
-    let file_path = state.resumes_dir.join(&resume.filename);
-
-    if !file_path.exists() {
-        return Err(ApiError::BadRequest("Resume file not found".to_string()));
-    }
-
-    let content = tokio::fs::read(&file_path)
+    // Check storage type and read file accordingly
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
         .await
-        .map_err(|_| ApiError::InternalServer("Failed to read resume".to_string()))?;
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
+
+    let content: Vec<u8> = if storage_type.starts_with("s3") {
+        // Try to download from S3
+        let s3_key = format!("resumes/{}", resume.filename);
+        info!(resume_id = %resume_id, s3_key = %s3_key, "Downloading resume from S3 for preview");
+        
+        match state.aws_service.download_file(&s3_key).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                // Fallback to local storage if S3 fails
+                warn!(error = %e, resume_id = %resume_id, "Failed to download from S3, trying local storage");
+                let file_path = state.resumes_dir.join(&resume.filename);
+                if !file_path.exists() {
+                    return Err(ApiError::BadRequest("Resume file not found".to_string()));
+                }
+                tokio::fs::read(&file_path)
+                    .await
+                    .map_err(|_| ApiError::InternalServer("Failed to read resume".to_string()))?
+            }
+        }
+    } else {
+        // Read from local storage
+        let file_path = state.resumes_dir.join(&resume.filename);
+        if !file_path.exists() {
+            return Err(ApiError::BadRequest("Resume file not found".to_string()));
+        }
+        tokio::fs::read(&file_path)
+            .await
+            .map_err(|_| ApiError::InternalServer("Failed to read resume".to_string()))?
+    };
 
     let disposition = format!("attachment; filename=\"{}\"", resume.filename);
     Ok((
