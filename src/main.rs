@@ -70,8 +70,12 @@ async fn main() -> anyhow::Result<()> {
     let openai_api_key = env::var("OPENAI_API_KEY").ok();
     let openai_model = env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4".to_string());
 
-    let mut admin_emails = HashSet::new();
-    admin_emails.insert("vaibhavblayer@gmail.com".to_string());
+    // Parse admin emails from comma-separated env var
+    let admin_emails: HashSet<String> = admin_emails_raw
+        .split(',')
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
 
     info!("Loaded admin emails: {:?}", admin_emails);
 
