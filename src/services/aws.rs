@@ -195,6 +195,38 @@ impl AWSService {
         Ok(url)
     }
 
+    /// Download a file from S3
+    pub async fn download_file(&self, key: &str) -> Result<Vec<u8>, AWSError> {
+        let (client, bucket) = self.get_s3_client().await?;
+
+        info!(key = %key, bucket = %bucket, "Downloading file from S3");
+
+        let response = client
+            .get_object()
+            .bucket(&bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| {
+                error!(error = %e, key = %key, "Failed to download file from S3");
+                AWSError::S3Error(format!("Download failed: {}", e))
+            })?;
+
+        let bytes = response
+            .body
+            .collect()
+            .await
+            .map_err(|e| {
+                error!(error = %e, key = %key, "Failed to read S3 response body");
+                AWSError::S3Error(format!("Failed to read response: {}", e))
+            })?
+            .into_bytes()
+            .to_vec();
+
+        info!(key = %key, size = bytes.len(), "File downloaded from S3 successfully");
+        Ok(bytes)
+    }
+
     /// List files in S3 bucket with optional prefix filtering
     pub async fn list_files(&self, prefix: Option<&str>) -> Result<Vec<S3Object>, AWSError> {
         let (client, bucket) = self.get_s3_client().await?;

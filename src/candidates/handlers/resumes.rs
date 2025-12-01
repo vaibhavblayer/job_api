@@ -305,30 +305,64 @@ pub async fn scan_resume(
         .await
         .map_err(ApiError::DatabaseError)?;
 
-    // Read the resume file
-    let file_path = state.resumes_dir.join(&resume.filename);
-    if !file_path.exists() {
-        error!(resume_id = %resume_id, "Resume file not found");
-        sqlx::query("UPDATE resumes SET status = 'error' WHERE id = ?")
-            .bind(&resume_id)
-            .execute(&state.db)
-            .await
-            .ok();
-        return Err(ApiError::BadRequest("Resume file not found".to_string()));
-    }
+    // Check storage type and read the resume file accordingly
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
 
-    // Read PDF file content
-    let pdf_bytes = match tokio::fs::read(&file_path).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            error!(error = %e, resume_id = %resume_id, "Failed to read resume file");
+    let pdf_bytes: Vec<u8> = if storage_type.starts_with("s3") {
+        // Try to download from S3
+        let s3_key = format!("resumes/{}", resume.filename);
+        info!(resume_id = %resume_id, s3_key = %s3_key, "Downloading resume from S3");
+        
+        match state.aws_service.download_file(&s3_key).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                // Fallback to local storage if S3 fails
+                warn!(error = %e, resume_id = %resume_id, "Failed to download from S3, trying local storage");
+                let file_path = state.resumes_dir.join(&resume.filename);
+                if !file_path.exists() {
+                    error!(resume_id = %resume_id, "Resume file not found in S3 or local storage");
+                    sqlx::query("UPDATE resumes SET status = 'error' WHERE id = ?")
+                        .bind(&resume_id)
+                        .execute(&state.db)
+                        .await
+                        .ok();
+                    return Err(ApiError::BadRequest("Resume file not found".to_string()));
+                }
+                tokio::fs::read(&file_path).await.map_err(|e| {
+                    error!(error = %e, resume_id = %resume_id, "Failed to read resume file");
+                    sqlx::query("UPDATE resumes SET status = 'error' WHERE id = ?")
+                        .bind(&resume_id)
+                        .execute(&state.db);
+                    ApiError::InternalServer("Failed to read resume file".to_string())
+                })?
+            }
+        }
+    } else {
+        // Read from local storage
+        let file_path = state.resumes_dir.join(&resume.filename);
+        if !file_path.exists() {
+            error!(resume_id = %resume_id, "Resume file not found");
             sqlx::query("UPDATE resumes SET status = 'error' WHERE id = ?")
                 .bind(&resume_id)
                 .execute(&state.db)
                 .await
                 .ok();
-            return Err(ApiError::InternalServer("Failed to read resume file".to_string()));
+            return Err(ApiError::BadRequest("Resume file not found".to_string()));
         }
+        
+        tokio::fs::read(&file_path).await.map_err(|e| {
+            error!(error = %e, resume_id = %resume_id, "Failed to read resume file");
+            sqlx::query("UPDATE resumes SET status = 'error' WHERE id = ?")
+                .bind(&resume_id)
+                .execute(&state.db);
+            ApiError::InternalServer("Failed to read resume file".to_string())
+        })?
     };
 
     // Extract text from PDF using pdf-extract crate (basic extraction)
