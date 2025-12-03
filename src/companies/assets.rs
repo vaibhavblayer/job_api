@@ -37,8 +37,10 @@ pub async fn upload_logo(
                 return Err(ApiError::BadRequest("Invalid image type".to_string()));
             }
 
-            let filename = save_logo_file(&state, &data).await?;
-            let logo_url = format!("/api/logos/{}", filename);
+            let (filename, s3_url) = save_logo_file(&state, &data).await?;
+            
+            // Use S3 URL if available, otherwise use local API path
+            let logo_url = s3_url.unwrap_or_else(|| format!("/api/logos/{}", filename));
 
             update_logo_setting(&state.db, &logo_url).await?;
 
@@ -101,33 +103,81 @@ pub async fn list_logos(
     .unwrap_or(None);
 
     let mut logos = Vec::new();
-    let mut entries = tokio::fs::read_dir(&state.logos_dir)
+    
+    // Check storage type
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
         .await
-        .map_err(|_| ApiError::InternalServer("Failed to read logos directory".to_string()))?;
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
 
-    while let Some(entry) = entries.next_entry().await.unwrap() {
-        if let Some(filename) = entry.file_name().to_str() {
-            let file_path = entry.path();
-            let metadata = tokio::fs::metadata(&file_path).await.ok();
-            
-            let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-            let uploaded_at = metadata
-                .as_ref()
-                .and_then(|m| m.created().ok())
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
+    // If using S3, list from S3
+    if storage_type.starts_with("s3") {
+        match state.aws_service.list_files(Some("logos/")).await {
+            Ok(s3_objects) => {
+                for obj in s3_objects {
+                    let filename = obj.key.strip_prefix("logos/").unwrap_or(&obj.key).to_string();
+                    if filename.is_empty() {
+                        continue;
+                    }
+                    
+                    // Get the full URL for this file
+                    let logo_url = match state.aws_service.get_file_url(&obj.key, true).await {
+                        Ok(url) => url,
+                        Err(_) => format!("/api/logos/{}", filename),
+                    };
+                    
+                    let is_active = active_logo_url.as_ref().map(|url| url.contains(&filename)).unwrap_or(false);
+                    let uploaded_at = obj.last_modified.map(|dt| dt.timestamp() as u64).unwrap_or(0);
 
-            let logo_url = format!("/api/logos/{}", filename);
-            let is_active = active_logo_url.as_ref().map(|url| url.contains(filename)).unwrap_or(false);
+                    logos.push(json!({
+                        "filename": filename,
+                        "url": logo_url,
+                        "size": obj.size,
+                        "is_active": is_active,
+                        "uploaded_at": uploaded_at
+                    }));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to list S3 logos, falling back to local");
+            }
+        }
+    }
+    
+    // Also list local logos (or as fallback)
+    if let Ok(mut entries) = tokio::fs::read_dir(&state.logos_dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if let Some(filename) = entry.file_name().to_str() {
+                // Skip if already in list from S3
+                if logos.iter().any(|l| l.get("filename").and_then(|f| f.as_str()) == Some(filename)) {
+                    continue;
+                }
+                
+                let file_path = entry.path();
+                let metadata = tokio::fs::metadata(&file_path).await.ok();
+                
+                let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                let uploaded_at = metadata
+                    .as_ref()
+                    .and_then(|m| m.created().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
 
-            logos.push(json!({
-                "filename": filename,
-                "url": logo_url,
-                "size": size,
-                "is_active": is_active,
-                "uploaded_at": uploaded_at
-            }));
+                let logo_url = format!("/api/logos/{}", filename);
+                let is_active = active_logo_url.as_ref().map(|url| url.contains(filename)).unwrap_or(false);
+
+                logos.push(json!({
+                    "filename": filename,
+                    "url": logo_url,
+                    "size": size,
+                    "is_active": is_active,
+                    "uploaded_at": uploaded_at
+                }));
+            }
         }
     }
 
@@ -198,7 +248,7 @@ pub async fn delete_logo_file(
 
 // Helper functions
 
-async fn save_logo_file(state: &AppState, data: &[u8]) -> Result<String, ApiError> {
+async fn save_logo_file(state: &AppState, data: &[u8]) -> Result<(String, Option<String>), ApiError> {
     use tracing::{info, warn};
     
     let filename = format!("{}.png", generate_raw_id(8));
@@ -220,9 +270,10 @@ async fn save_logo_file(state: &AppState, data: &[u8]) -> Result<String, ApiErro
             .upload_file(data.to_vec(), &s3_key, "image/png")
             .await
         {
-            Ok(_url) => {
-                info!(s3_key = %s3_key, "Logo uploaded to S3 successfully");
-                return Ok(filename);
+            Ok(s3_url) => {
+                info!(s3_key = %s3_key, s3_url = %s3_url, "Logo uploaded to S3 successfully");
+                // Return filename and S3 URL
+                return Ok((filename, Some(s3_url)));
             }
             Err(e) => {
                 warn!(error = %e, "Failed to upload logo to S3, falling back to local storage");
@@ -237,7 +288,7 @@ async fn save_logo_file(state: &AppState, data: &[u8]) -> Result<String, ApiErro
         .await
         .map_err(|_| ApiError::InternalServer("Failed to save logo".to_string()))?;
 
-    Ok(filename)
+    Ok((filename, None))
 }
 
 async fn update_logo_setting(db: &sqlx::SqlitePool, logo_url: &str) -> Result<(), ApiError> {
