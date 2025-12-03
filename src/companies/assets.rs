@@ -230,16 +230,49 @@ pub async fn delete_logo_file(
     }
 
     let state = state_lock.read().await;
+    
+    // Check storage type
+    let storage_type = state
+        .settings_service
+        .get_setting("storage_type")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "local".to_string());
 
-    let file_path = state.logos_dir.join(&filename);
+    let mut deleted = false;
 
-    if !file_path.exists() {
-        return Err(ApiError::BadRequest("Logo not found".to_string()));
+    // Try to delete from S3 first if using S3 storage
+    if storage_type.starts_with("s3") {
+        let s3_key = format!("logos/{}", filename);
+        match state.aws_service.delete_file(&s3_key).await {
+            Ok(_) => {
+                tracing::info!(s3_key = %s3_key, "Logo deleted from S3");
+                deleted = true;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, s3_key = %s3_key, "Failed to delete logo from S3, trying local");
+            }
+        }
     }
 
-    tokio::fs::remove_file(&file_path)
-        .await
-        .map_err(|_| ApiError::InternalServer("Failed to delete logo".to_string()))?;
+    // Also try to delete from local storage
+    let file_path = state.logos_dir.join(&filename);
+    if file_path.exists() {
+        match tokio::fs::remove_file(&file_path).await {
+            Ok(_) => {
+                tracing::info!(path = ?file_path, "Logo deleted from local storage");
+                deleted = true;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, path = ?file_path, "Failed to delete logo from local storage");
+            }
+        }
+    }
+
+    if !deleted {
+        return Err(ApiError::BadRequest("Logo not found in storage".to_string()));
+    }
 
     Ok(Json(json!({
         "message": "Logo deleted successfully"
